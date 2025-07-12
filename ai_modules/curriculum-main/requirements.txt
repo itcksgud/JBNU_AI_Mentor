@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+numpy
+python-dotenv
+pydantic
+openai
+networkx
+matplotlib
+seaborn
+tqdm
+torch
+transformers
+faiss-cpu
+rank_bm25
+tiktoken
+pymysql

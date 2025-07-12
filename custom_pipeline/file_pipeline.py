@@ -6,7 +6,7 @@ import json
 class Pipeline:
     class Valves(BaseModel):
         # LLM 에이전트(8001번 포트) URL / 타임아웃 설정
-        agent_url: str = "http://localhost:8001/mock"
+        agent_url: str = "http://host.docker.internal:8001/mock"
         timeout: float = 200.0
 
     def __init__(self):
