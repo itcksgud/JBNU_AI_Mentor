@@ -76,6 +76,15 @@ class Pipeline:
             if body["stream"]:
                 return r.iter_lines()
             else:
-                return r.json()
+                res = r.json()
+                # tool_response가 있으면 반환, 없으면 OpenAI 기본 content 반환
+                steps = res.get("message", {}).get("steps", [])
+                if steps and isinstance(steps[0], dict) and "tool_response" in steps[0]:
+                    return steps[0]["tool_response"]
+                # 주석: OpenAI 응답 형식(content)만 반환하도록 수정
+                elif "choices" in res and res["choices"]:
+                    return res["choices"][0]["message"]["content"]
+                else:
+                    return "[Invalid LLM response format]"
         except Exception as e:
             return f"Error: {e}"
