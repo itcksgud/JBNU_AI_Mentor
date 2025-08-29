@@ -18,7 +18,7 @@ class CoreService():
             {"tool_name": "JBNU_SQL", "tool_description": "Accepts a natural‐language query about JBNU (colleges, departments, courses, professors) and returns the corresponding data. Do not send raw SQL.", "api_key": "query", "api_value": "<USER_QUESTION>", "api_url": "http://localhost:7999/agent"},
             {"tool_name": "FALLBACK", "tool_description": "Use for general questions, or questions that can be answered from the conversation history (e.g., 'what did I just ask?', 'what is my name?').", "api_key": "query", "api_value": "<USER_QUESTION>", "api_url": "http://localhost:7998/agent"},
             {"tool_name": "VECTOR_SEARCH", "tool_description": "Recommends courses similar to a given course name based on vector similarity. The 'count' defaults to 5 if the user does not specify a number.", "api_key": "count, key", "api_value": "<INTEGER_DEFAULT_5>, <COURSE_NAME>", "api_url": "http://localhost:7997/search"},
-            {"tool_name": "CURRICULUM_RECOMMEND", "tool_description": "Accepts a natural-language learning goal and desired number of courses/departments, then returns a personalized curriculum recommendation.", "api_key": "query", "api_value": "<USER_GOAL>", "api_url": "http://localhost:7996/chat"}
+            {"tool_name": "CURRICULUM_RECOMMEND", "tool_description": "Use this tool when the user asks for a 'learning path', 'curriculum', 'study plan', or describes a long-term learning goal. It accepts a natural-language goal and returns a personalized curriculum recommendation.", "api_key": "query", "api_value": "<USER_GOAL>", "api_url": "http://localhost:7996/chat"}
         ]
 
         self.tool_urls = {t['tool_name']: t.get('api_url', t['tool_name']) for t in self.prompt_tools}
@@ -76,53 +76,67 @@ class CoreService():
     #    - 작업이 단일 단계로 끝날지, 여러 단계가 필요할지 판단
     # --------------------------------------------------------------------------
     ROUTER_SYSTEM_PROMPT = """
-You are a planning agent. Your job is to analyze the user's conversation history and decide on a plan to answer their request.
+You are an expert planning agent. Your primary job is to analyze the user's **ultimate goal** from their conversation history and decide on a precise plan.
 
-You have two plans available:
-1.  **single_step**: If the entire request can be resolved by calling a single tool, choose this plan.
-2.  **multi_step**: If the request requires multiple tool calls or complex reasoning, choose this plan.
+--- RULES ---
+1.  **Analyze the user's ultimate goal.** Do not get distracted by the length or complexity of their question.
+2.  **Crucial Rule:** If the user asks for a "learning path," "curriculum," "study plan," "learning process," or describes a long-term learning goal, you **MUST** classify it as a `single_step` and use the `CURRICULUM_RECOMMEND` tool.
+3.  Choose a plan:
+    * `single_step`: Use this if the user's final goal can be achieved with **one single tool call**.
+    * `multi_step`: Use this **only if** the user explicitly asks for **multiple, separate pieces of information** that require a sequence of tool calls (e.g., "Find X, **and then** find Y").
 
-Based on the conversation history, return a JSON object with your plan.
-- For **single_step**, specify the tool, api_key, and api_value.
-- For **multi_step**, you don't need to specify a tool.
+--- RESPONSE FORMAT ---
+You must return a single, valid JSON object.
+- For `single_step`, you must provide "tool_name", "api_key", and "api_value".
+- For `multi_step`, you only need to provide "plan_type" and "reason".
 
-Example for single_step (DB Query):
+--- EXAMPLES ---
+
+Example 1 (Curriculum Request - IMPORTANT):
+User Query: "I want to learn computer graphics and 3D design to build city simulations. What learning process should I follow?"
+Your JSON Response:
+{{
+    "plan_type": "single_step",
+    "tool_name": "CURRICULUM_RECOMMEND",
+    "api_key": "query",
+    "api_value": "A learning path for building city simulations using computer graphics and 3D design.",
+    "reason": "The user is asking for a detailed learning path, which directly maps to the CURRICULUM_RECOMMEND tool."
+}}
+
+Example 2 (Simple DB Query):
+User Query: "Tell me about the computer science department."
+Your JSON Response:
 {{
     "plan_type": "single_step",
     "tool_name": "JBNU_SQL",
     "api_key": "query",
-    "api_value": "컴퓨터공학부에 대해 알려줘.",
-    "reason": "The user is asking a direct question about a department."
+    "api_value": "Information about the computer science department.",
+    "reason": "The user is asking for a single piece of information about a department."
 }}
 
-Example for single_step (Vector Search without count specified):
+Example 3 (Vector Search with count):
+User Query: "Recommend 3 courses similar to 'Database'."
+Your JSON Response:
 {{
     "plan_type": "single_step",
     "tool_name": "VECTOR_SEARCH",
     "api_key": "key, count",
-    "api_value": "자료구조, 5",
-    "reason": "The user wants courses similar to '자료구조' and did not specify a number, so the default of 5 is used."
+    "api_value": "Database, 3",
+    "reason": "The user specifically asked for 3 courses similar to 'Database'."
 }}
 
-Example for single_step (Vector Search with count specified):
-{{
-    "plan_type": "single_step",
-    "tool_name": "VECTOR_SEARCH",
-    "api_key": "key, count",
-    "api_value": "데이터베이스, 3",
-    "reason": "The user specifically asked for 3 courses similar to '데이터베이스'."
-}}
-
-Example for multi_step:
+Example 4 (Multi-Step Request):
+User Query: "Find the department for Professor Kim, and then list the courses offered by that department."
+Your JSON Response:
 {{
     "plan_type": "multi_step",
-    "reason": "The user wants to find a professor, then find courses they teach."
+    "reason": "The user has two distinct goals that must be executed in sequence: first find the professor's department (JBNU_SQL), and then find the department's courses (another JBNU_SQL call)."
 }}
 
-Available Tools:
+--- AVAILABLE TOOLS ---
 {tools}
 
-Now, create your plan. Respond strictly with a single JSON object.
+Now, analyze the conversation and create your plan.
 """
 
     # --------------------------------------------------------------------------
@@ -188,7 +202,8 @@ Analyze the scratchpad below and determine your next action.
             return history_data
         elif plan_type == "multi_step":
             print("Plan: Multi step. Starting ReAct chain.")
-            return self._execute_multi_step_chain(trimmed_messages)
+            initial_reason = routing_decision.get("reason", "No initial plan provided.")
+            return self._execute_multi_step_chain(trimmed_messages, initial_reason)
         else:
             print("Error: Could not determine a plan. Falling back to default.")
             tool_name = "FALLBACK"
@@ -254,12 +269,14 @@ Analyze the scratchpad below and determine your next action.
         except requests.RequestException as e:
             return {"error": str(e)}
 
-    def _execute_multi_step_chain(self, messages: list):
+    def _execute_multi_step_chain(self, messages: list, initial_reason: str):
         print("\n--- Starting ReAct Chain with Scratchpad ---")
         
         # 1. 스크래치패드 초기화: 최초 대화 기록을 담습니다.
         scratchpad = "Conversation History:\n"
         scratchpad += "".join([f"- {msg.role}: {msg.content}\n" for msg in messages])
+
+        scratchpad += f"Initial Plan: {initial_reason}\n"
         
         history_data = {"steps": []}
         step_number = 1
