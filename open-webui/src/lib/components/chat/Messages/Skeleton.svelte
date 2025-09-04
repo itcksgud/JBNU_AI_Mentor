@@ -14,7 +14,7 @@
 <div class="w-full mt-2 mb-2">
   <!-- 상단: 애니메이션 텍스트 -->
   <div class="w-full py-3 px-4 text-sm text-muted-foreground">
-    생각하는 중{dots}
+    답변을 생각하는 중{dots}
   </div>
 
   <!-- 하단: 기존 회색 블럭 스켈레톤 -->
